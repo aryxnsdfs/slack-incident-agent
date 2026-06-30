@@ -1,3 +1,7 @@
+import asyncio
+import os
+
+import boto3
 from openai import AsyncOpenAI
 
 from app.config import get_settings
@@ -37,7 +41,11 @@ class ContextOpsAgent:
         return context, await self._resolve(context)
 
     async def _resolve(self, context: IncidentContext) -> IncidentResolution:
-        if self.settings.openai_api_key and not self.settings.demo_mode:
+        if self.settings.demo_mode:
+            return self._deterministic_resolution(context)
+        if self.settings.ai_provider == "bedrock" and self.settings.aws_bearer_token_bedrock:
+            return await self._resolve_with_bedrock(context)
+        if self.settings.ai_provider == "openai" and self.settings.openai_api_key:
             return await self._resolve_with_openai(context)
         return self._deterministic_resolution(context)
 
@@ -90,6 +98,45 @@ class ContextOpsAgent:
             confidence="medium",
             historical_reference=context.slack_hits[0] if context.slack_hits else None,
         )
+
+    async def _resolve_with_bedrock(self, context: IncidentContext) -> IncidentResolution:
+        text = await asyncio.to_thread(self._bedrock_converse, context)
+        return IncidentResolution(
+            diagnosis=text.splitlines()[0] if text else context.aws.summary,
+            recommendation=text or context.aws.summary,
+            confidence="medium",
+            historical_reference=context.slack_hits[0] if context.slack_hits else None,
+        )
+
+    def _bedrock_converse(self, context: IncidentContext) -> str:
+        if self.settings.aws_bearer_token_bedrock and not os.getenv("AWS_BEARER_TOKEN_BEDROCK"):
+            os.environ["AWS_BEARER_TOKEN_BEDROCK"] = self.settings.aws_bearer_token_bedrock
+
+        client = boto3.client("bedrock-runtime", region_name=self.settings.aws_region)
+        logs = "\n".join(event.message for event in context.aws.log_events[:8]) or "No matching log events."
+        hits = "\n".join(hit.text for hit in context.slack_hits[:5]) or "No matching Slack history."
+        response = client.converse(
+            modelId=self.settings.bedrock_model_id,
+            system=[
+                {
+                    "text": (
+                        "You are ContextOps, a Slack-native incident responder. "
+                        "Return a short diagnosis, recommendation, and confidence."
+                    )
+                }
+            ],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"text": f"Request: {context.query}\nAWS logs:\n{logs}\nSlack history:\n{hits}"}
+                    ],
+                }
+            ],
+            inferenceConfig={"temperature": 0.2, "maxTokens": 600},
+        )
+        content = response.get("output", {}).get("message", {}).get("content", [])
+        return "\n".join(block.get("text", "") for block in content if block.get("text")).strip()
 
 
 def format_slack_response(resolution: IncidentResolution) -> str:

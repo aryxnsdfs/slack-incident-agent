@@ -18,6 +18,16 @@ async def health() -> dict[str, str | bool]:
     return {"status": "ok", "app": settings.app_name, "demo_mode": settings.demo_mode}
 
 
+@api.get("/slack-incident-agent")
+async def mounted_health() -> dict[str, str | bool]:
+    return await health()
+
+
 @api.post("/slack/events")
 async def slack_events(request: Request):
+    return await handler.handle(request)
+
+
+@api.post("/slack-incident-agent/slack/events")
+async def mounted_slack_events(request: Request):
     return await handler.handle(request)

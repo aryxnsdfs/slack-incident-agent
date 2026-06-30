@@ -1,9 +1,18 @@
 import pytest
 
+from app.config import get_settings
 from app.agent import ContextOpsAgent
 from app.aws_tools import get_aws_logs
 from app.models import AwsDiagnostics
 from app.slack_search import SlackKnowledgeSearch
+
+
+@pytest.fixture(autouse=True)
+def demo_settings(monkeypatch):
+    monkeypatch.setenv("DEMO_MODE", "true")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

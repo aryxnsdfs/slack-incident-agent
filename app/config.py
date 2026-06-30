@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,8 +18,11 @@ class Settings(BaseSettings):
     slack_realtime_search_method: str = "search.messages"
     slack_search_count: int = 5
 
+    ai_provider: Literal["deterministic", "openai", "bedrock"] = "bedrock"
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
+    bedrock_model_id: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+    aws_bearer_token_bedrock: str = ""
 
     aws_region: str = "us-east-1"
     cloudwatch_log_group: str = "/aws/ecs/payment-api"
