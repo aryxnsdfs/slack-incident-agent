@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from starlette.responses import PlainTextResponse
 
 from app.config import get_settings
 from app.slack_app import handler
@@ -25,9 +26,25 @@ async def mounted_health() -> dict[str, str | bool]:
 
 @api.post("/slack/events")
 async def slack_events(request: Request):
+    challenge = await _slack_url_verification_challenge(request)
+    if challenge:
+        return PlainTextResponse(challenge)
     return await handler.handle(request)
 
 
 @api.post("/slack-incident-agent/slack/events")
 async def mounted_slack_events(request: Request):
+    challenge = await _slack_url_verification_challenge(request)
+    if challenge:
+        return PlainTextResponse(challenge)
     return await handler.handle(request)
+
+
+async def _slack_url_verification_challenge(request: Request) -> str | None:
+    if "application/json" not in request.headers.get("content-type", ""):
+        return None
+
+    payload = await request.json()
+    if payload.get("type") == "url_verification":
+        return payload.get("challenge", "")
+    return None
