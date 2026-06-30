@@ -24,6 +24,14 @@ async def mounted_health() -> dict[str, str | bool]:
     return await health()
 
 
+@api.post("/slack-incident-agent")
+async def mounted_slack_events_short(request: Request):
+    challenge = await _slack_url_verification_challenge(request)
+    if challenge:
+        return PlainTextResponse(challenge)
+    return await handler.handle(request)
+
+
 @api.post("/slack/events")
 async def slack_events(request: Request):
     challenge = await _slack_url_verification_challenge(request)
