@@ -48,7 +48,7 @@ SLACK_SEARCH_COUNT=5
 
 AI_PROVIDER=bedrock
 AWS_BEARER_TOKEN_BEDROCK=your-bedrock-api-key
-BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20240620-v1:0
+BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-6
 
 AWS_REGION=us-east-1
 CLOUDWATCH_LOG_GROUP=/aws/ecs/contextops

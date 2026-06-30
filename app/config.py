@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     ai_provider: Literal["deterministic", "openai", "bedrock"] = "bedrock"
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
-    bedrock_model_id: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+    bedrock_model_id: str = "anthropic.claude-sonnet-4-6"
     aws_bearer_token_bedrock: str = ""
 
     aws_region: str = "us-east-1"
