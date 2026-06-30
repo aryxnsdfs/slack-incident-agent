@@ -55,7 +55,7 @@ Set these variables when switching out of demo mode:
 DEMO_MODE=false
 AI_PROVIDER=bedrock
 AWS_BEARER_TOKEN_BEDROCK=your-bedrock-api-key
-BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-6
+BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-6
 AWS_REGION=us-east-1
 CLOUDWATCH_LOG_GROUP=/aws/ecs/payment-api
 S3_REPORT_BUCKET=contextops-incident-reports
