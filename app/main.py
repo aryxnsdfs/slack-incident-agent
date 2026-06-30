@@ -44,7 +44,11 @@ async def _slack_url_verification_challenge(request: Request) -> str | None:
     if "application/json" not in request.headers.get("content-type", ""):
         return None
 
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except ValueError:
+        return None
+
     if payload.get("type") == "url_verification":
         return payload.get("challenge", "")
     return None
