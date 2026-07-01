@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import re
 
@@ -11,6 +12,8 @@ from app.mcp_client import DiagnosticsClient, build_diagnostics_client
 from app.models import IncidentContext, IncidentResolution, SlackSearchHit
 from app.slack_search import SlackKnowledgeSearch
 
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "You are ContextOps, a Slack-native incident responder. "
@@ -101,22 +104,30 @@ class ContextOpsAgent:
         )
 
     async def _resolve_with_openai(self, context: IncidentContext) -> IncidentResolution:
-        client = AsyncOpenAI(api_key=self.settings.openai_api_key)
-        response = await client.chat.completions.create(
-            model=self.settings.openai_model,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": self._build_prompt(context)},
-            ],
-            temperature=0.2,
-            response_format={"type": "json_object"},
-        )
-        text = response.choices[0].message.content or ""
-        return self._parse_resolution(text, context)
+        try:
+            client = AsyncOpenAI(api_key=self.settings.openai_api_key)
+            response = await client.chat.completions.create(
+                model=self.settings.openai_model,
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": self._build_prompt(context)},
+                ],
+                temperature=0.2,
+                response_format={"type": "json_object"},
+            )
+            text = response.choices[0].message.content or ""
+            return self._parse_resolution(text, context)
+        except Exception as exc:
+            logger.warning("OpenAI resolution failed, using deterministic fallback: %s", exc)
+            return self._deterministic_resolution(context)
 
     async def _resolve_with_bedrock(self, context: IncidentContext) -> IncidentResolution:
-        text = await asyncio.to_thread(self._bedrock_converse, context)
-        return self._parse_resolution(text, context)
+        try:
+            text = await asyncio.to_thread(self._bedrock_converse, context)
+            return self._parse_resolution(text, context)
+        except Exception as exc:
+            logger.warning("Bedrock resolution failed, using deterministic fallback: %s", exc)
+            return self._deterministic_resolution(context)
 
     def _build_prompt(self, context: IncidentContext) -> str:
         logs = "\n".join(event.message for event in context.aws.log_events[:8]) or "No matching log events."
