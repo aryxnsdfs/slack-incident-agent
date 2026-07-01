@@ -1,5 +1,7 @@
 import asyncio
+import json
 import os
+import re
 
 import boto3
 from openai import AsyncOpenAI
@@ -8,6 +10,34 @@ from app.config import get_settings
 from app.mcp_client import DiagnosticsClient, build_diagnostics_client
 from app.models import IncidentContext, IncidentResolution, SlackSearchHit
 from app.slack_search import SlackKnowledgeSearch
+
+
+_SYSTEM_PROMPT = (
+    "You are ContextOps, a Slack-native incident responder. "
+    "Reply with a single JSON object and nothing else, no markdown fences, no prose. "
+    "Schema: {\"diagnosis\": string, \"recommendation\": string, \"confidence\": \"high\"|\"medium\"|\"low\"}. "
+    "Keep diagnosis to one or two plain sentences. "
+    "Keep recommendation to a short actionable next step (one to three sentences). "
+    "Do not include headings, emojis, or bullet lists."
+)
+
+
+def _extract_json(text: str) -> dict | None:
+    if not text:
+        return None
+    candidate = text.strip()
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", candidate, re.DOTALL)
+    if fence:
+        candidate = fence.group(1)
+    else:
+        brace = re.search(r"\{.*\}", candidate, re.DOTALL)
+        if brace:
+            candidate = brace.group(0)
+    try:
+        data = json.loads(candidate)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 class ContextOpsAgent:
@@ -72,40 +102,50 @@ class ContextOpsAgent:
 
     async def _resolve_with_openai(self, context: IncidentContext) -> IncidentResolution:
         client = AsyncOpenAI(api_key=self.settings.openai_api_key)
-        logs = "\n".join(event.message for event in context.aws.log_events[:8])
-        hits = "\n".join(hit.text for hit in context.slack_hits[:5])
         response = await client.chat.completions.create(
             model=self.settings.openai_model,
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are ContextOps, a Slack-native incident responder. "
-                        "Return a short diagnosis, recommendation, and confidence."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"Request: {context.query}\nAWS logs:\n{logs}\nSlack history:\n{hits}",
-                },
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": self._build_prompt(context)},
             ],
             temperature=0.2,
+            response_format={"type": "json_object"},
         )
-        text = response.choices[0].message.content or context.aws.summary
-        return IncidentResolution(
-            diagnosis=text.splitlines()[0] if text else context.aws.summary,
-            recommendation=text,
-            confidence="medium",
-            historical_reference=context.slack_hits[0] if context.slack_hits else None,
-        )
+        text = response.choices[0].message.content or ""
+        return self._parse_resolution(text, context)
 
     async def _resolve_with_bedrock(self, context: IncidentContext) -> IncidentResolution:
         text = await asyncio.to_thread(self._bedrock_converse, context)
+        return self._parse_resolution(text, context)
+
+    def _build_prompt(self, context: IncidentContext) -> str:
+        logs = "\n".join(event.message for event in context.aws.log_events[:8]) or "No matching log events."
+        hits = "\n".join(hit.text for hit in context.slack_hits[:5]) or "No matching Slack history."
+        return f"Request: {context.query}\nAWS logs:\n{logs}\nSlack history:\n{hits}"
+
+    def _parse_resolution(self, text: str, context: IncidentContext) -> IncidentResolution:
+        history = context.slack_hits[0] if context.slack_hits else None
+        fallback_confidence = "medium" if context.aws.log_events else "low"
+        data = _extract_json(text)
+        if data:
+            diagnosis = str(data.get("diagnosis") or "").strip() or context.aws.summary
+            recommendation = str(data.get("recommendation") or "").strip() or context.aws.summary
+            confidence = str(data.get("confidence") or "").strip().lower() or fallback_confidence
+            if confidence not in {"high", "medium", "low"}:
+                confidence = fallback_confidence
+            return IncidentResolution(
+                diagnosis=diagnosis,
+                recommendation=recommendation,
+                confidence=confidence,
+                historical_reference=history,
+            )
+        # Model did not return JSON; degrade to the raw text as a single diagnosis line.
+        clean = " ".join(text.split()).strip()
         return IncidentResolution(
-            diagnosis=text.splitlines()[0] if text else context.aws.summary,
-            recommendation=text or context.aws.summary,
-            confidence="medium",
-            historical_reference=context.slack_hits[0] if context.slack_hits else None,
+            diagnosis=clean or context.aws.summary,
+            recommendation=clean or context.aws.summary,
+            confidence=fallback_confidence,
+            historical_reference=history,
         )
 
     def _bedrock_converse(self, context: IncidentContext) -> str:
@@ -113,24 +153,13 @@ class ContextOpsAgent:
             os.environ["AWS_BEARER_TOKEN_BEDROCK"] = self.settings.aws_bearer_token_bedrock
 
         client = boto3.client("bedrock-runtime", region_name=self.settings.aws_region)
-        logs = "\n".join(event.message for event in context.aws.log_events[:8]) or "No matching log events."
-        hits = "\n".join(hit.text for hit in context.slack_hits[:5]) or "No matching Slack history."
         response = client.converse(
             modelId=self.settings.bedrock_model_id,
-            system=[
-                {
-                    "text": (
-                        "You are ContextOps, a Slack-native incident responder. "
-                        "Return a short diagnosis, recommendation, and confidence."
-                    )
-                }
-            ],
+            system=[{"text": _SYSTEM_PROMPT}],
             messages=[
                 {
                     "role": "user",
-                    "content": [
-                        {"text": f"Request: {context.query}\nAWS logs:\n{logs}\nSlack history:\n{hits}"}
-                    ],
+                    "content": [{"text": self._build_prompt(context)}],
                 }
             ],
             inferenceConfig={"temperature": 0.2, "maxTokens": 600},
