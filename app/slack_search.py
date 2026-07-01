@@ -24,10 +24,13 @@ class SlackKnowledgeSearch:
     def __init__(self, client: AsyncWebClient | None = None) -> None:
         settings = get_settings()
         self.settings = settings
-        self.client = client or AsyncWebClient(token=settings.slack_bot_token)
+        # search.messages requires a user token (xoxp-) with search:read;
+        # a bot token (xoxb-) returns not_allowed_token_type.
+        self.search_token = settings.slack_user_token or settings.slack_bot_token
+        self.client = client or AsyncWebClient(token=self.search_token)
 
     async def search(self, query: str) -> list[SlackSearchHit]:
-        if self.settings.demo_mode or not self.settings.slack_bot_token:
+        if self.settings.demo_mode or not self.search_token:
             return DEMO_HITS
 
         try:
