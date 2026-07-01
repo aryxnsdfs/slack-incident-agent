@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     slack_bot_token: str = ""
     slack_user_token: str = ""
+    slack_bot_user_id: str = ""
     slack_signing_secret: str = ""
     slack_realtime_search_method: str = "search.messages"
     slack_search_count: int = 5

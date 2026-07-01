@@ -5,6 +5,24 @@ from app.config import get_settings
 from app.models import SlackSearchHit
 
 
+# The agent's own Slack replies start with these phrases. Filtering them out
+# prevents the bot from citing its own past messages as "prior context".
+_AGENT_REPLY_SIGNATURES = (
+    "i checked aws diagnostics",
+    "i am checking aws diagnostics",
+    "i could not complete the investigation",
+    "incident report generated",
+    "i do not have an investigation cached",
+    "reply `report`",
+    "reply report",
+)
+
+
+def _is_agent_echo(text: str) -> bool:
+    low = text.strip().lower()
+    return any(sig in low for sig in _AGENT_REPLY_SIGNATURES)
+
+
 DEMO_HITS = [
     SlackSearchHit(
         title="Payment API 500s from Redis cache saturation",
@@ -56,15 +74,23 @@ class SlackKnowledgeSearch:
 
         messages = response.get("messages", {})
         matches = messages.get("matches", []) if isinstance(messages, dict) else []
+        bot_user_id = self.settings.slack_bot_user_id
         hits = []
         for match in matches:
+            text = (match.get("text") or "").strip()
+            # Skip empty hits, the bot's own author id, and the bot's echoed replies.
+            if not text or _is_agent_echo(text):
+                continue
+            if bot_user_id and match.get("user") == bot_user_id:
+                continue
+            channel_name = match.get("channel", {}).get("name")
             hits.append(
                 SlackSearchHit(
-                    title=match.get("channel", {}).get("name", "Prior Slack discussion"),
+                    title=channel_name or "Prior Slack discussion",
                     permalink=match.get("permalink", ""),
-                    channel_name=match.get("channel", {}).get("name"),
+                    channel_name=channel_name,
                     user_name=match.get("user_name") or match.get("username"),
-                    text=match.get("text", ""),
+                    text=text,
                     timestamp=match.get("ts"),
                 )
             )
